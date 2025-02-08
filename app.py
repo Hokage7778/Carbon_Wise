@@ -13,28 +13,46 @@ from langchain.prompts import PromptTemplate
 
 # ------------------------------------------------------------------
 # Configuration using Streamlit Secrets
+
 # Load the Firebase service account JSON from st.secrets (which is already a dict)
 firebase_config = st.secrets["firebase"]
 
-# Remove any extra keys that Firebase does not require.
-allowed_keys = [
-    "type", "project_id", "private_key_id", "private_key",
-    "client_email", "client_id", "auth_uri", "token_uri",
-    "auth_provider_x509_cert_url", "client_x509_cert_url"
-]
-firebase_config = {k: v for k, v in firebase_config.items() if k in allowed_keys}
+# Validate that all required keys are present.
+required_keys = {
+    "type",
+    "project_id",
+    "private_key_id",
+    "private_key",
+    "client_email",
+    "client_id",
+    "auth_uri",
+    "token_uri",
+    "auth_provider_x509_cert_url",
+    "client_x509_cert_url"
+}
+missing_keys = required_keys - firebase_config.keys()
+if missing_keys:
+    st.error(f"Firebase configuration is missing keys: {missing_keys}")
+    st.stop()
+
+# Optionally filter extra keys to only allowed keys.
+firebase_config = {k: v for k, v in firebase_config.items() if k in required_keys}
 
 # Fix the private key formatting: replace escaped newline characters with actual newlines.
 if "private_key" in firebase_config:
     firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
 
 # Initialize Firebase with the cleaned configuration.
-cred = credentials.Certificate(firebase_config)
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
-})
+try:
+    cred = credentials.Certificate(firebase_config)
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
+    })
+except Exception as e:
+    st.error(f"Failed to initialize Firebase: {e}")
+    st.stop()
 
-# Load the Hugging Face API key from st.secrets
+# Load the Hugging Face API key from st.secrets.
 HF_API_KEY = st.secrets["huggingface"]["api_key"]
 
 # ------------------------------------------------------------------
