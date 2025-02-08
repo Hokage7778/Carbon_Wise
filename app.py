@@ -6,6 +6,7 @@ import base64
 import os
 import re
 from datetime import datetime
+import json  # For parsing the JSON string from config
 from huggingface_hub import InferenceClient
 from langchain_community.llms import HuggingFaceHub
 from langchain.chains import LLMChain
@@ -16,7 +17,6 @@ from langchain.prompts import PromptTemplate
 # First try to use Streamlit's secrets; if not available, fall back to a local config.toml
 try:
     secrets = st.secrets  # For deployments on Streamlit Cloud, use secrets
-    # Create a mutable copy of the Firebase configuration
     firebase_config = dict(secrets["firebase"])
     HF_API_KEY = secrets["huggingface"]["api_key"]
 except Exception:
@@ -25,22 +25,33 @@ except Exception:
     firebase_config = CONFIG["firebase"]
     HF_API_KEY = CONFIG["huggingface"]["api_key"]
 
-# --- Fix for the private key formatting ---
-# Ensure that escaped newlines in the private key are converted to actual newlines.
-if "private_key" in firebase_config:
-    firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
-
 # ------------------------------------------------------------------
 # Firebase Initialization
 def initialize_firebase():
     if not firebase_admin._apps:
         try:
-            cred = credentials.Certificate(firebase_config)
-            # Construct the database URL using the project_id from the config.
-            database_url = f"https://{firebase_config['project_id']}-default-rtdb.firebaseio.com"
-            firebase_admin.initialize_app(cred, {
-                'databaseURL': database_url
-            })
+            # If a "credentials" key exists, assume it is a JSON string.
+            if "credentials" in firebase_config:
+                if isinstance(firebase_config["credentials"], str):
+                    cred_data = json.loads(firebase_config["credentials"])
+                else:
+                    cred_data = firebase_config["credentials"]
+            else:
+                cred_data = firebase_config
+
+            # Fix private_key formatting if necessary.
+            if "private_key" in cred_data:
+                cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
+
+            # Create the credential object.
+            cred = credentials.Certificate(cred_data)
+
+            # Determine the database URL.
+            # If the config includes a "database_url", use it; otherwise construct one.
+            project_id = cred_data.get("project_id", "")
+            database_url = firebase_config.get("database_url", f"https://{project_id}-default-rtdb.firebaseio.com")
+
+            firebase_admin.initialize_app(cred, {'databaseURL': database_url})
             return True
         except Exception as e:
             st.error(f"Failed to initialize Firebase: {str(e)}")
