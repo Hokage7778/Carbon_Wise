@@ -14,7 +14,7 @@ from langchain.prompts import PromptTemplate
 
 # ------------------------------------------------------------------
 # Configuration
-SERVICE_ACCOUNT_PATH = "/Users/abhishekdwivedi/Documents/Abhishek/Personal/Image_AI/service.json"
+SERVICE_ACCOUNT_PATH = "Service.json"
 HF_API_KEY = "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"
 
 # ------------------------------------------------------------------
