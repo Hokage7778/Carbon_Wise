@@ -39,17 +39,22 @@ def initialize_firebase():
             else:
                 cred_data = firebase_config
 
-            # Fix private_key formatting if necessary.
-            if "private_key" in cred_data:
-                cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
+            # IMPORTANT: We remove the replace call so that if the private_key
+            # has *real* newlines in your config, it remains valid.
+            # If your key is stored with literal "\\n", restore the line below
+            # and ensure the key is double-escaped in your TOML.
+            # if "private_key" in cred_data:
+            #     cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
             # Create the credential object.
             cred = credentials.Certificate(cred_data)
 
             # Determine the database URL.
-            # If the config includes a "database_url", use it; otherwise construct one.
             project_id = cred_data.get("project_id", "")
-            database_url = firebase_config.get("database_url", f"https://{project_id}-default-rtdb.firebaseio.com")
+            database_url = firebase_config.get(
+                "database_url",
+                f"https://{project_id}-default-rtdb.firebaseio.com"
+            )
 
             firebase_admin.initialize_app(cred, {'databaseURL': database_url})
             return True
@@ -129,15 +134,20 @@ def describe_image(image_path):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text",
-                     "text": (
-                         "Analyze this image in detail for eco-friendly activities. "
-                         "Look for any evidence of recycling (e.g., reusable items or PCR content), "
-                         "public transport usage (e.g., train tickets), or exercise (walking/cycling). "
-                         "Provide measurements and numbers where visible."
-                     )},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
-                ]
+                    {
+                        "type": "text",
+                        "text": (
+                            "Analyze this image in detail for eco-friendly activities. "
+                            "Look for any evidence of recycling (e.g., reusable items or PCR content), "
+                            "public transport usage (e.g., train tickets), or exercise (walking/cycling). "
+                            "Provide measurements and numbers where visible."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                    },
+                ],
             }
         ]
         completion = client.chat.completions.create(
@@ -481,7 +491,7 @@ def main():
                     submit_login = st.form_submit_button("Login")
                     if submit_login:
                         try:
-                            # Note: get_user_by_email does not verify the password.
+                            # Note: get_user_by_email does NOT verify the password.
                             user = auth.get_user_by_email(login_email)
                             st.session_state.logged_in = True
                             st.session_state.user = {"email": login_email, "uid": user.uid}
