@@ -42,8 +42,11 @@ firebase_config = {k: v for k, v in firebase_config.items() if k in required_key
 if "private_key" in firebase_config:
     firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
 
-# Initialize Firebase only if it hasn't been initialized already.
-if not firebase_admin._apps:
+# Initialize Firebase only once.
+try:
+    # Try to get the default app; if it doesn't exist, a ValueError is thrown.
+    firebase_admin.get_app()
+except ValueError:
     try:
         cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred, {
