@@ -14,18 +14,27 @@ from langchain.prompts import PromptTemplate
 import requests
 
 # ------------------------------------------------------------------
-# Load Configuration from Streamlit Secrets
+# Load Configuration from Streamlit Secrets (or local file)
 def load_config():
     try:
-        # Access secrets directly
+        # Try loading from Streamlit Secrets first
         firebase_config = st.secrets["firebase"]
         hf_api_key = st.secrets["huggingface"]["api_key"]
         return firebase_config, hf_api_key
-    except KeyError as e:
-        st.error(f"Missing secret in Streamlit Secrets: {e}.  Make sure you've configured your secrets correctly.")
-        st.stop()
-    except AttributeError as e:
-        st.error("Streamlit Secrets are not configured.  This code is designed for deployment on Streamlit Cloud.")
+    except (KeyError, AttributeError) as e:
+        # If Streamlit Secrets are not available, load from a local config.json file
+        st.warning("Streamlit Secrets not found. Loading from 'config.json'.")
+        try:
+            with open("config.json", "r") as f:
+                config = json.load(f)
+                firebase_config = config["firebase"]
+                hf_api_key = config["huggingface"]["api_key"]
+                return firebase_config, hf_api_key
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            st.error(f"Error loading config.json: {e}.  Make sure the file exists and is valid JSON.")
+            st.stop()
+    except Exception as e: #Catch other exceptions
+        st.error(f"An unexpected error occurred: {e}")
         st.stop()
 
 # ------------------------------------------------------------------
@@ -33,25 +42,27 @@ def load_config():
 def initialize_firebase(firebase_config):
     if not firebase_admin._apps:
         try:
-            # Handle credentials (expecting a dictionary from Streamlit Secrets)
+            # Handle credentials (expecting a dictionary from Streamlit Secrets or config.json)
             if "credentials" in firebase_config:
                 cred_data = firebase_config["credentials"]
             else:
                 cred_data = firebase_config
 
             # Ensure private_key has correct newlines (CRITICAL)
-            # Streamlit Secrets should handle newlines correctly, but we'll keep this for safety
             if "private_key" in cred_data:
                 cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
             cred = credentials.Certificate(cred_data)
 
-            # Determine database URL
-            project_id = cred_data.get("project_id", "")
-            database_url = firebase_config.get(
-                "database_url",
-                f"https://{project_id}-default-rtdb.firebaseio.com"
-            )
+            # Determine database URL (from config or construct it)
+            database_url = firebase_config.get("database_url")
+            if not database_url:
+                project_id = cred_data.get("project_id")
+                if project_id:
+                    database_url = f"https://{project_id}-default-rtdb.firebaseio.com"
+                else:
+                    st.error("Cannot determine database URL.  'project_id' missing in credentials.")
+                    return False
 
             firebase_admin.initialize_app(cred, {'databaseURL': database_url})
             return True
@@ -123,7 +134,7 @@ def encode_image(image_path):
 
 def describe_image(image_path,hf_api_key):
     try:
-        client = InferenceClient(api_key=hf_api_key)
+        client = InferenceClient(token=hf_api_key) #Changed api_key to token
         image_b64 = encode_image(image_path)
         messages = [
             {
@@ -145,8 +156,8 @@ def describe_image(image_path,hf_api_key):
                 ],
             }
         ]
-        completion = client.chat.completions.create(
-            model="meta-llama/Llama-3.2-11B-Vision-Instruct",
+        completion = client.chat_completion( #Changed chat.completions.create to chat_completion
+            model="meta-llama/Llama-3-8B-Instruct", #Changed model
             messages=messages,
             max_tokens=500
         )
@@ -208,8 +219,9 @@ Image Description:
             """
         )
         llm = HuggingFaceHub(
-            repo_id="Qwen/Qwen2.5-72B-Instruct",
-            huggingfacehub_api_token=hf_api_key
+            repo_id="Qwen/Qwen1.5-72B-Chat", #Changed model
+            huggingfacehub_api_token=hf_api_key,
+            model_kwargs={"temperature": 0.1, "max_new_tokens": 500} #Added model_kwargs
         )
         chain = LLMChain(llm=llm, prompt=prompt)
         response = chain.run(vision_output)
@@ -408,14 +420,18 @@ def show_dashboard(hf_api_key):
 
         # Save activity to Firebase.
         if st.session_state.user:
-            ref = db.reference(f'users/{st.session_state.user["uid"]}/activities')
-            ref.push({
-                "timestamp": datetime.now().isoformat(),
-                "image_description": vision_output,
-                "activity_details": activity_details
-            })
-            st.success("✅ Activity logged successfully!")
-            rerun()
+            try:
+                ref = db.reference(f'users/{st.session_state.user["uid"]}/activities')
+                ref.push({
+                    "timestamp": datetime.now().isoformat(),
+                    "image_description": vision_output,
+                    "activity_details": activity_details
+                })
+                st.success("✅ Activity logged successfully!")
+            except Exception as e:
+                st.error(f"Error saving activity to Firebase: {e}") #Error saving activity
+            finally: #Always rerun
+                rerun()
 
         if os.path.exists(temp_image_path):
             os.remove(temp_image_path)
@@ -481,11 +497,26 @@ def main():
                     submit_signup = st.form_submit_button("Create Account")
                     if submit_signup:
                         try:
-                            auth.create_user(email=signup_email, password=signup_password)
+                            user = auth.create_user(email=signup_email, password=signup_password) #Get user
                             st.success("✅ Account created successfully!")
                             st.info("Please login with your new account.")
                             st.session_state.show_signup = False
-                            rerun()
+
+                            # Log in the new user automatically
+                            web_api_key = firebase_config.get("apiKey")
+                            if not web_api_key:
+                                raise ValueError("Firebase Web API Key (apiKey) not found in configuration.")
+                            auth_response = get_firebase_auth_token(signup_email, signup_password, web_api_key)
+                            st.session_state.logged_in = True
+                            st.session_state.user = {
+                                "email": auth_response['email'],
+                                "uid": auth_response['localId'],
+                                "id_token": auth_response['idToken']
+                            }
+                            rerun() #Rerun after creating account
+
+                        except firebase_admin.auth.EmailAlreadyExistsError: #Catch EmailAlreadyExistsError
+                            st.error("The email address is already in use by another account.")
                         except Exception as e:
                             st.error(f"Sign up failed: {e}")
                 if st.button("Back to Login"):
