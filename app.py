@@ -47,17 +47,14 @@ if "private_key" in firebase_config:
 # This function will run only once per session.
 @st.experimental_singleton
 def init_firebase():
-    try:
-        # Try to get the default app. If it exists, just return it.
-        app = firebase_admin.get_app()
-        return app
-    except ValueError:
-        # If no default app exists, initialize one.
+    # Check if any Firebase app has already been initialized.
+    if not firebase_admin._apps:
         cred = credentials.Certificate(firebase_config)
-        app = firebase_admin.initialize_app(cred, {
+        firebase_admin.initialize_app(cred, {
             'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
         })
-        return app
+    # Return the already initialized default app.
+    return firebase_admin.get_app()
 
 # Call the initialization function (this will cache the app)
 init_firebase()
