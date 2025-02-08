@@ -53,9 +53,7 @@ def initialize_firebase(firebase_config):
             # Ensure private_key has correct newlines (CRITICAL)
             if "private_key" in cred_data:
                 # This replace is ONLY needed if your private_key in the TOML
-                # file has literal '\\n' instead of actual newlines.  If you
-                # pasted the key directly from Firebase, this should NOT be
-                # necessary.  If you're unsure, it's safer to leave it in.
+                # file has literal '\\n' instead of actual newlines.
                 cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
             cred = credentials.Certificate(cred_data)
@@ -64,7 +62,7 @@ def initialize_firebase(firebase_config):
             project_id = cred_data.get("project_id", "")
             database_url = firebase_config.get(
                 "database_url",
-                f"https://{project_id}-default-rtdb.firebaseio.com"  # Corrected URL format
+                f"https://{project_id}-default-rtdb.firebaseio.com"
             )
 
             firebase_admin.initialize_app(cred, {'databaseURL': database_url})
@@ -81,7 +79,7 @@ def rerun():
     st.rerun()
 
 # ------------------------------------------------------------------
-# Function to fetch and aggregate CO₂ savings from Firebase for the logged-in user
+# Function to fetch and aggregate CO₂ savings from Firebase
 def get_co2_summary(user_uid):
     summary = {"Today": 0, "This Week": 0, "This Month": 0, "This Year": 0, "Overall": 0}
     try:
@@ -112,7 +110,7 @@ def get_co2_summary(user_uid):
         return summary
 
 # ------------------------------------------------------------------
-# Function to generate trivia based on overall CO₂ savings
+# Function to generate trivia
 def generate_trivia(overall_co2):
     trees = overall_co2 / 22.0
     tree_count = max(1, int(trees)) if overall_co2 >= 1 else "less than 1"
@@ -178,7 +176,7 @@ def clean_vision_output(text):
     return "\n".join(cleaned)
 
 # ------------------------------------------------------------------
-# Function to calculate CO₂ savings based on extracted metrics
+# Function to calculate CO₂ savings
 def calculate_co2_savings(activity_type, metrics):
     try:
         savings = 0
@@ -198,7 +196,7 @@ def calculate_co2_savings(activity_type, metrics):
         return 0
 
 # ------------------------------------------------------------------
-# Main processing function using LLM for extraction and fallback regex as needed.
+# Main processing function using LLM
 def process_with_langchain(vision_output, hf_api_key):
     try:
         prompt = PromptTemplate(
@@ -356,7 +354,7 @@ def show_dashboard(hf_api_key):
         if st.button("Sign Out"):
             st.session_state.logged_in = False
             st.session_state.user = None
-            rerun()  # Use the simplified rerun
+            rerun()
 
     st.title("📊 CarbonWise")
     st.markdown("Upload an image to analyze eco-friendly activities and track your CO₂ savings.")
@@ -415,7 +413,6 @@ def show_dashboard(hf_api_key):
             if activity_details['source'] and activity_details['destination']:
                 st.write(f"**Route:** {activity_details['source']} to {activity_details['destination']}")
 
-        # --- Key Change: Display CO₂ Savings with one decimal place ---
         st.metric("CO₂ Savings", f"{activity_details['co2_savings']:.1f} kg")
 
         if activity_details['additional_notes']:
@@ -430,13 +427,14 @@ def show_dashboard(hf_api_key):
                 "activity_details": activity_details
             })
             st.success("✅ Activity logged successfully!")
-            rerun()  # Use simplified rerun
+            rerun()
 
         if os.path.exists(temp_image_path):
             os.remove(temp_image_path)
 
 # ------------------------------------------------------------------
 # Authentication and Main Function
+
 def get_firebase_auth_token(email, password, api_key):
     """Authenticates with email/password and returns the ID token."""
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
@@ -498,7 +496,7 @@ def main():
                             auth.create_user(email=signup_email, password=signup_password)
                             st.success("✅ Account created successfully!")
                             st.info("Please login with your new account.")
-                            st.session_state.show_signup = False  # Go back to login after signup
+                            st.session_state.show_signup = False
                             rerun()
                         except Exception as e:
                             st.error(f"Sign up failed: {e}")
@@ -530,15 +528,15 @@ def main():
                             st.session_state.user = {
                                 "email": auth_response['email'],
                                 "uid": auth_response['localId'],
-                                "id_token": auth_response['idToken']  # Store the ID token
+                                "id_token": auth_response['idToken']
                             }
                             st.success("✅ Logged in successfully!")
-                            rerun()  # Go to dashboard
+                            rerun()
 
                         except requests.exceptions.HTTPError as e:
                             error_json = e.response.json()
                             error_message = error_json.get("error", {}).get("message", "Unknown error")
-                            st.error(f"Login failed: {error_message}")
+                            st.error(f"Login failed: {error_message}")  # More specific error
                         except Exception as e:
                             st.error(f"Login failed: {e}")
 
