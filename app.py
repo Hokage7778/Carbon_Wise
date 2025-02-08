@@ -44,8 +44,8 @@ if "private_key" in firebase_config:
 
 # ------------------------------------------------------------------
 # Initialize Firebase only once using caching.
-# Using st.cache_resource to cache the resource across runs.
-@st.cache_resource
+# Using st.cache with allow_output_mutation=True to cache the Firebase app.
+@st.cache(allow_output_mutation=True)
 def init_firebase():
     # Check if any Firebase app has already been initialized.
     if not firebase_admin._apps:
@@ -67,7 +67,7 @@ HF_API_KEY = st.secrets["huggingface"]["api_key"]
 def rerun_app():
     try:
         st.experimental_rerun()
-    except AttributeError:
+    except Exception:
         st.stop()
 
 # ------------------------------------------------------------------
