@@ -14,11 +14,8 @@ from langchain.prompts import PromptTemplate
 
 # ------------------------------------------------------------------
 # Configuration using Streamlit Secrets
-# Load the Firebase service account JSON from st.secrets
-firebase_config = json.loads(
-    st.secrets["firebase"].to_json() if hasattr(st.secrets["firebase"], "to_json") 
-    else json.dumps(st.secrets["firebase"])
-)
+# Directly load the Firebase service account JSON from st.secrets (which is already a dict)
+firebase_config = st.secrets["firebase"]
 cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
