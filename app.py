@@ -3,7 +3,6 @@ import firebase_admin
 from firebase_admin import credentials, auth, db
 from PIL import Image
 import base64
-import json
 import os
 import re
 from datetime import datetime
@@ -16,7 +15,7 @@ from langchain.prompts import PromptTemplate
 # Load Configuration
 # First try to use Streamlit's secrets; if not available, fall back to a local config.toml
 try:
-    CONFIG = st.secrets  # when deployed on Streamlit Cloud, secrets are available here.
+    CONFIG = st.secrets  # For deployments on Streamlit Cloud, use secrets
     firebase_config = CONFIG["firebase"]
     HF_API_KEY = CONFIG["huggingface"]["api_key"]
 except Exception:
@@ -25,12 +24,16 @@ except Exception:
     firebase_config = CONFIG["firebase"]
     HF_API_KEY = CONFIG["huggingface"]["api_key"]
 
+# --- Fix for the private key formatting ---
+# Ensure that escaped newlines in the private key are converted to actual newlines.
+if "private_key" in firebase_config:
+    firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
+
 # ------------------------------------------------------------------
 # Firebase Initialization
 def initialize_firebase():
     if not firebase_admin._apps:
         try:
-            # Use the firebase_config dictionary directly as the service account info.
             cred = credentials.Certificate(firebase_config)
             # Construct the database URL using the project_id from the config.
             database_url = f"https://{firebase_config['project_id']}-default-rtdb.firebaseio.com"
@@ -48,7 +51,7 @@ def initialize_firebase():
 def rerun_app():
     try:
         st.experimental_rerun()
-    except AttributeError:
+    except Exception:
         st.stop()
 
 # ------------------------------------------------------------------
@@ -466,6 +469,7 @@ def main():
                     submit_login = st.form_submit_button("Login")
                     if submit_login:
                         try:
+                            # Note: get_user_by_email does not verify the password.
                             user = auth.get_user_by_email(login_email)
                             st.session_state.logged_in = True
                             st.session_state.user = {"email": login_email, "uid": user.uid}
