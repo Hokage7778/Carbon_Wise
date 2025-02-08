@@ -157,7 +157,7 @@ def describe_image(image_path,hf_api_key):
             }
         ]
         completion = client.chat_completion( #Changed chat.completions.create to chat_completion
-            model="meta-llama/Llama-3-8B-Instruct", #Changed model
+            model="meta-llama/Llama-3.2-11B-Vision-Instruct", #Changed model
             messages=messages,
             max_tokens=500
         )
@@ -219,7 +219,7 @@ Image Description:
             """
         )
         llm = HuggingFaceHub(
-            repo_id="Qwen/Qwen1.5-72B-Chat", #Changed model
+            repo_id="Qwen/Qwen2.5-72B-Instruct", #Changed model
             huggingfacehub_api_token=hf_api_key,
             model_kwargs={"temperature": 0.1, "max_new_tokens": 500} #Added model_kwargs
         )
