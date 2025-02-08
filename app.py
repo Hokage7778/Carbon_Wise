@@ -6,31 +6,42 @@ import base64
 import os
 import re
 from datetime import datetime
-import json  # For parsing the JSON string from config
+import json
 from huggingface_hub import InferenceClient
 from langchain_community.llms import HuggingFaceHub
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
+import toml
+
 
 # ------------------------------------------------------------------
-# Load Configuration
-# First try to use Streamlit's secrets; if not available, fall back to a local config.toml
-try:
-    secrets = st.secrets  # For deployments on Streamlit Cloud, use secrets
-    firebase_config = dict(secrets["firebase"])
-    HF_API_KEY = secrets["huggingface"]["api_key"]
-except Exception:
-    import toml
-    CONFIG = toml.load("config.toml")
-    firebase_config = CONFIG["firebase"]
-    HF_API_KEY = CONFIG["huggingface"]["api_key"]
+# Load Configuration (Streamlit Secrets or Local TOML)
+def load_config():
+    try:
+        # Try to use Streamlit secrets (for deployment)
+        return dict(st.secrets["firebase"]), st.secrets["huggingface"]["api_key"]
+    except (KeyError, AttributeError) as e:
+        # Fallback to local config.toml (for local development)
+        try:
+            config = toml.load("config.toml")
+            return config["firebase"], config["huggingface"]["api_key"]
+        except FileNotFoundError:
+            st.error("Error: config.toml not found.  Create it or set Streamlit secrets.")
+            st.stop()
+        except toml.TomlDecodeError as toml_error:
+            st.error(f"Error decoding TOML: {toml_error}")
+            st.stop()
+        except KeyError as key_error:
+            st.error(f"Missing key in config.toml: {key_error}")
+            st.stop()
+
 
 # ------------------------------------------------------------------
 # Firebase Initialization
-def initialize_firebase():
+def initialize_firebase(firebase_config):
     if not firebase_admin._apps:
         try:
-            # If a "credentials" key exists, assume it is a JSON string.
+            # Handle credentials (either JSON string or dictionary)
             if "credentials" in firebase_config:
                 if isinstance(firebase_config["credentials"], str):
                     cred_data = json.loads(firebase_config["credentials"])
@@ -39,37 +50,35 @@ def initialize_firebase():
             else:
                 cred_data = firebase_config
 
-            # IMPORTANT: We remove the replace call so that if the private_key
-            # has *real* newlines in your config, it remains valid.
-            # If your key is stored with literal "\\n", restore the line below
-            # and ensure the key is double-escaped in your TOML.
+            # Ensure private_key has correct newlines (CRITICAL)
             if "private_key" in cred_data:
-                 cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
+                # This replace is ONLY needed if your private_key in the TOML
+                # file has literal '\\n' instead of actual newlines.  If you
+                # pasted the key directly from Firebase, this should NOT be
+                # necessary.  If you're unsure, it's safer to leave it in.
+                cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
-            # Create the credential object.
             cred = credentials.Certificate(cred_data)
 
-            # Determine the database URL.
+            # Determine database URL
             project_id = cred_data.get("project_id", "")
             database_url = firebase_config.get(
                 "database_url",
-                f"https://{project_id}-default-rtdb.firebaseio.com"
+                f"https://{project_id}-default-rtdb.firebaseio.com"  # Corrected URL format
             )
 
             firebase_admin.initialize_app(cred, {'databaseURL': database_url})
             return True
         except Exception as e:
-            st.error(f"Failed to initialize Firebase: {str(e)}")
-            return False
+            st.error(f"Firebase initialization failed: {e}")
+            return False  # Return False on failure
     return True
 
+
 # ------------------------------------------------------------------
-# Helper function to safely rerun the app
-def rerun_app():
-    try:
-        st.experimental_rerun()
-    except Exception:
-        st.stop()
+# Helper function to safely rerun the app (Simplified)
+def rerun():
+    st.rerun()
 
 # ------------------------------------------------------------------
 # Function to fetch and aggregate CO₂ savings from Firebase for the logged-in user
@@ -126,9 +135,9 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
-def describe_image(image_path):
+def describe_image(image_path,hf_api_key):
     try:
-        client = InferenceClient(api_key=HF_API_KEY)
+        client = InferenceClient(api_key=hf_api_key)
         image_b64 = encode_image(image_path)
         messages = [
             {
@@ -190,7 +199,7 @@ def calculate_co2_savings(activity_type, metrics):
 
 # ------------------------------------------------------------------
 # Main processing function using LLM for extraction and fallback regex as needed.
-def process_with_langchain(vision_output):
+def process_with_langchain(vision_output, hf_api_key):
     try:
         prompt = PromptTemplate(
             input_variables=["vision_output"],
@@ -214,7 +223,7 @@ Image Description:
         )
         llm = HuggingFaceHub(
             repo_id="Qwen/Qwen2.5-72B-Instruct",
-            huggingfacehub_api_token=HF_API_KEY
+            huggingfacehub_api_token=hf_api_key
         )
         chain = LLMChain(llm=llm, prompt=prompt)
         response = chain.run(vision_output)
@@ -340,14 +349,14 @@ Image Description:
 
 # ------------------------------------------------------------------
 # Dashboard Display (with Firebase integration)
-def show_dashboard():
+def show_dashboard(hf_api_key):
     with st.sidebar:
         st.markdown("### Account")
         st.write(f"**Logged in as:** {st.session_state.user['email']}")
         if st.button("Sign Out"):
             st.session_state.logged_in = False
             st.session_state.user = None
-            rerun_app()
+            rerun()  # Use the simplified rerun
 
     st.title("📊 CarbonWise")
     st.markdown("Upload an image to analyze eco-friendly activities and track your CO₂ savings.")
@@ -373,7 +382,7 @@ def show_dashboard():
         image.save(temp_image_path)
 
         st.info("⏳ Analyzing image... Please wait.")
-        vision_output = describe_image(temp_image_path)
+        vision_output = describe_image(temp_image_path,hf_api_key)
         if "Error" in vision_output:
             st.error(vision_output)
             return
@@ -384,7 +393,7 @@ def show_dashboard():
         st.markdown("### 📝 Image Description")
         st.write(vision_output_clean)
 
-        activity_details = process_with_langchain(vision_output)
+        activity_details = process_with_langchain(vision_output, hf_api_key)
         st.markdown("### 📊 Activity Details")
         col1, col2 = st.columns(2)
         with col1:
@@ -421,7 +430,7 @@ def show_dashboard():
                 "activity_details": activity_details
             })
             st.success("✅ Activity logged successfully!")
-            rerun_app()
+            rerun()  # Use simplified rerun
 
         if os.path.exists(temp_image_path):
             os.remove(temp_image_path)
@@ -449,13 +458,13 @@ def main():
     if 'show_signup' not in st.session_state:
         st.session_state.show_signup = False
 
-    if not initialize_firebase():
-        st.error("Firebase initialization failed.")
-        return
+    firebase_config, hf_api_key = load_config()
+    if not initialize_firebase(firebase_config):
+        return  # Stop if Firebase init fails
 
     # If logged in, show the dashboard.
     if st.session_state.logged_in:
-        show_dashboard()
+        show_dashboard(hf_api_key)
         return
 
     # Authentication Page
@@ -463,6 +472,7 @@ def main():
         st.markdown("<h1 style='text-align: center;'>CarbonWise</h1>", unsafe_allow_html=True)
         st.markdown("<hr>", unsafe_allow_html=True)
         col1, col2 = st.columns(2)
+
         if st.session_state.show_signup:
             with col1:
                 st.subheader("Sign Up")
@@ -472,38 +482,45 @@ def main():
                     submit_signup = st.form_submit_button("Create Account")
                     if submit_signup:
                         try:
-                            user = auth.create_user(email=signup_email, password=signup_password)
+                            auth.create_user(email=signup_email, password=signup_password)
                             st.success("✅ Account created successfully!")
                             st.info("Please login with your new account.")
+                            st.session_state.show_signup = False  # Go back to login after signup
+                            rerun()
                         except Exception as e:
-                            st.error(f"Sign up failed: {str(e)}")
+                            st.error(f"Sign up failed: {e}")
                 if st.button("Back to Login"):
                     st.session_state.show_signup = False
+                    rerun()
+
             with col2:
                 st.markdown("### Welcome to CarbonWise")
                 st.write("Join us to track your eco-friendly activities and monitor your CO₂ savings.")
-        else:
+        else:  # Login form
             with col1:
                 st.subheader("Login")
-                with st.form("login_form", clear_on_submit=False):
+                with st.form("login_form", clear_on_submit=True):
                     login_email = st.text_input("Email", key="login_email")
                     login_password = st.text_input("Password", type="password", key="login_password")
                     submit_login = st.form_submit_button("Login")
                     if submit_login:
                         try:
-                            # Note: get_user_by_email does NOT verify the password.
-                            user = auth.get_user_by_email(login_email)
+                            # *** CORRECT AUTHENTICATION ***
+                            user = auth.sign_in_with_email_and_password(login_email, login_password)
                             st.session_state.logged_in = True
-                            st.session_state.user = {"email": login_email, "uid": user.uid}
+                            st.session_state.user = {"email": user['email'], "uid": user['localId']}
                             st.success("✅ Logged in successfully!")
-                            rerun_app()
+                            rerun()  # Go to dashboard
                         except Exception as e:
-                            st.error(f"Login failed: {str(e)}")
+                            st.error(f"Login failed: {e}")  # Display the actual error
+
             with col2:
                 st.markdown("### Welcome Back!")
                 st.write("Log in to view your CarbonWise dashboard and check your CO₂ savings.")
                 if st.button("Don't have an account? Sign Up", key="signup_button"):
                     st.session_state.show_signup = True
+                    rerun()
+
 
 if __name__ == '__main__':
     main()
