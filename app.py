@@ -43,8 +43,8 @@ def initialize_firebase():
             # has *real* newlines in your config, it remains valid.
             # If your key is stored with literal "\\n", restore the line below
             # and ensure the key is double-escaped in your TOML.
-            # if "private_key" in cred_data:
-            #     cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
+             if "private_key" in cred_data:
+                 cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
             # Create the credential object.
             cred = credentials.Certificate(cred_data)
