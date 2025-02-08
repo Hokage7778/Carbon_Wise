@@ -1,4 +1,3 @@
-import json
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, auth, db
@@ -14,12 +13,18 @@ from langchain.prompts import PromptTemplate
 
 # ------------------------------------------------------------------
 # Configuration using Streamlit Secrets
-# Directly load the Firebase service account JSON from st.secrets (which is already a dict)
+# Load the Firebase service account JSON from st.secrets (which is already a dict)
 firebase_config = st.secrets["firebase"]
+
+# Fix the private key formatting: replace escaped newline characters with actual newlines.
+if "private_key" in firebase_config:
+    firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
+
 cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
 })
+
 # Load the Hugging Face API key from st.secrets
 HF_API_KEY = st.secrets["huggingface"]["api_key"]
 
