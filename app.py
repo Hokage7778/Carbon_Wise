@@ -11,49 +11,37 @@ from huggingface_hub import InferenceClient
 from langchain_community.llms import HuggingFaceHub
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
-import toml
 import requests
 
 # ------------------------------------------------------------------
-# Load Configuration (Streamlit Secrets or Local TOML)
+# Load Configuration from Streamlit Secrets
 def load_config():
     try:
-        # Try to use Streamlit secrets (for deployment)
-        return dict(st.secrets["firebase"]), st.secrets["huggingface"]["api_key"]
-    except (KeyError, AttributeError) as e:
-        # Fallback to local config.toml (for local development)
-        try:
-            config = toml.load("config.toml")
-            return config["firebase"], config["huggingface"]["api_key"]
-        except FileNotFoundError:
-            st.error("Error: config.toml not found.  Create it or set Streamlit secrets.")
-            st.stop()
-        except toml.TomlDecodeError as toml_error:
-            st.error(f"Error decoding TOML: {toml_error}")
-            st.stop()
-        except KeyError as key_error:
-            st.error(f"Missing key in config.toml: {key_error}")
-            st.stop()
-
+        # Access secrets directly
+        firebase_config = st.secrets["firebase"]
+        hf_api_key = st.secrets["huggingface"]["api_key"]
+        return firebase_config, hf_api_key
+    except KeyError as e:
+        st.error(f"Missing secret in Streamlit Secrets: {e}.  Make sure you've configured your secrets correctly.")
+        st.stop()
+    except AttributeError as e:
+        st.error("Streamlit Secrets are not configured.  This code is designed for deployment on Streamlit Cloud.")
+        st.stop()
 
 # ------------------------------------------------------------------
 # Firebase Initialization
 def initialize_firebase(firebase_config):
     if not firebase_admin._apps:
         try:
-            # Handle credentials (either JSON string or dictionary)
+            # Handle credentials (expecting a dictionary from Streamlit Secrets)
             if "credentials" in firebase_config:
-                if isinstance(firebase_config["credentials"], str):
-                    cred_data = json.loads(firebase_config["credentials"])
-                else:
-                    cred_data = firebase_config["credentials"]
+                cred_data = firebase_config["credentials"]
             else:
                 cred_data = firebase_config
 
             # Ensure private_key has correct newlines (CRITICAL)
+            # Streamlit Secrets should handle newlines correctly, but we'll keep this for safety
             if "private_key" in cred_data:
-                # This replace is ONLY needed if your private_key in the TOML
-                # file has literal '\\n' instead of actual newlines.
                 cred_data["private_key"] = cred_data["private_key"].replace("\\n", "\n")
 
             cred = credentials.Certificate(cred_data)
