@@ -15,9 +15,10 @@ from langchain.prompts import PromptTemplate
 # Load Configuration
 # First try to use Streamlit's secrets; if not available, fall back to a local config.toml
 try:
-    CONFIG = st.secrets  # For deployments on Streamlit Cloud, use secrets
-    firebase_config = CONFIG["firebase"]
-    HF_API_KEY = CONFIG["huggingface"]["api_key"]
+    secrets = st.secrets  # For deployments on Streamlit Cloud, use secrets
+    # Create a mutable copy of the Firebase configuration
+    firebase_config = dict(secrets["firebase"])
+    HF_API_KEY = secrets["huggingface"]["api_key"]
 except Exception:
     import toml
     CONFIG = toml.load("config.toml")
