@@ -3,6 +3,7 @@ import firebase_admin
 from firebase_admin import credentials, auth, db
 from PIL import Image
 import base64
+import json
 import os
 import re
 from datetime import datetime
@@ -12,61 +13,42 @@ from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 
 # ------------------------------------------------------------------
-# Configuration using Streamlit Secrets
-
-# Load the Firebase service account JSON from st.secrets (already a dict)
-firebase_config = st.secrets["firebase"]
-
-# Validate that all required keys are present.
-required_keys = {
-    "type",
-    "project_id",
-    "private_key_id",
-    "private_key",
-    "client_email",
-    "client_id",
-    "auth_uri",
-    "token_uri",
-    "auth_provider_x509_cert_url",
-    "client_x509_cert_url"
-}
-missing_keys = required_keys - firebase_config.keys()
-if missing_keys:
-    st.error(f"Firebase configuration is missing keys: {missing_keys}")
-    st.stop()
-
-# Optionally filter extra keys (adjust if needed).
-firebase_config = {k: v for k, v in firebase_config.items() if k in required_keys}
-
-# Fix the private key formatting: replace escaped newline characters with actual newlines.
-if "private_key" in firebase_config:
-    firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
+# Load Configuration
+# First try to use Streamlit's secrets; if not available, fall back to a local config.toml
+try:
+    CONFIG = st.secrets  # when deployed on Streamlit Cloud, secrets are available here.
+    firebase_config = CONFIG["firebase"]
+    HF_API_KEY = CONFIG["huggingface"]["api_key"]
+except Exception:
+    import toml
+    CONFIG = toml.load("config.toml")
+    firebase_config = CONFIG["firebase"]
+    HF_API_KEY = CONFIG["huggingface"]["api_key"]
 
 # ------------------------------------------------------------------
-# Initialize Firebase only once using caching.
-@st.cache_resource
-def init_firebase():
-    # Check if any Firebase app has already been initialized.
+# Firebase Initialization
+def initialize_firebase():
     if not firebase_admin._apps:
-        cred = credentials.Certificate(firebase_config)
-        firebase_admin.initialize_app(cred, {
-            'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
-        })
-    # Return the already initialized default app.
-    return firebase_admin.get_app()
-
-# Call the initialization function (this will cache the app)
-init_firebase()
-
-# Load the Hugging Face API key from st.secrets.
-HF_API_KEY = st.secrets["huggingface"]["api_key"]
+        try:
+            # Use the firebase_config dictionary directly as the service account info.
+            cred = credentials.Certificate(firebase_config)
+            # Construct the database URL using the project_id from the config.
+            database_url = f"https://{firebase_config['project_id']}-default-rtdb.firebaseio.com"
+            firebase_admin.initialize_app(cred, {
+                'databaseURL': database_url
+            })
+            return True
+        except Exception as e:
+            st.error(f"Failed to initialize Firebase: {str(e)}")
+            return False
+    return True
 
 # ------------------------------------------------------------------
 # Helper function to safely rerun the app
 def rerun_app():
     try:
         st.experimental_rerun()
-    except Exception:
+    except AttributeError:
         st.stop()
 
 # ------------------------------------------------------------------
@@ -99,6 +81,7 @@ def get_co2_summary(user_uid):
     except Exception as e:
         print("Error fetching CO2 summary:", e)
         return summary
+
 # ------------------------------------------------------------------
 # Function to generate trivia based on overall CO₂ savings
 def generate_trivia(overall_co2):
@@ -179,6 +162,7 @@ def calculate_co2_savings(activity_type, metrics):
     except Exception as e:
         print(f"CO₂ calculation error: {str(e)}")
         return 0
+
 # ------------------------------------------------------------------
 # Main processing function using LLM for extraction and fallback regex as needed.
 def process_with_langchain(vision_output):
@@ -280,7 +264,7 @@ Image Description:
             elif key == "Additional Notes":
                 activity_details["additional_notes"] = value
 
-        # Fallback Extraction from Raw Vision Output
+        # --- Fallback Extraction from Raw Vision Output ---
         if activity_details["distance_km"] == 0:
             m = re.search(r"(?i)distance.*?(\d+\.?\d*)\s*kilometers", vision_output, re.DOTALL)
             if m:
@@ -328,152 +312,172 @@ Image Description:
             "additional_notes": "",
             "co2_savings": 0
         }
+
 # ------------------------------------------------------------------
-# Main processing function using LLM for extraction and fallback regex as needed.
-def process_with_langchain(vision_output):
-    try:
-        prompt = PromptTemplate(
-            input_variables=["vision_output"],
-            template="""
-Analyze the following text and extract eco-friendly activity details.
-Output one key-value pair per line in the following format:
-Activity Type: [Recycling/Exercise/Public Transport/None]
-Items Description: [detailed description or empty string]
-PCR Percentage: [number or 0]
-Reusable Items: [number or 0]
-Single-Use Items Saved: [number or 0]
-Distance (km): [number or 0]
-Duration (min): [number or 0]
-Source: [text or empty string]
-Destination: [text or empty string]
-Additional Notes: [text or empty string]
+# Dashboard Display (with Firebase integration)
+def show_dashboard():
+    with st.sidebar:
+        st.markdown("### Account")
+        st.write(f"**Logged in as:** {st.session_state.user['email']}")
+        if st.button("Sign Out"):
+            st.session_state.logged_in = False
+            st.session_state.user = None
+            rerun_app()
 
-Image Description:
-{vision_output}
-            """
-        )
-        llm = HuggingFaceHub(
-            repo_id="Qwen/Qwen2.5-72B-Instruct",
-            huggingfacehub_api_token=HF_API_KEY
-        )
-        chain = LLMChain(llm=llm, prompt=prompt)
-        response = chain.run(vision_output)
-        print(f"LLM Response:\n{response}")
+    st.title("📊 CarbonWise")
+    st.markdown("Upload an image to analyze eco-friendly activities and track your CO₂ savings.")
 
-        activity_details = {
-            "activity_type": "Not Available",
-            "items_description": "",
-            "pcr_percentage": 0,
-            "reusable_items": 0,
-            "single_use_saved": 0,
-            "distance_km": 0,
-            "time_duration": 0,
-            "source": "",
-            "destination": "",
-            "additional_notes": "",
-            "co2_savings": 0
+    # Display CO₂ savings summary.
+    if st.session_state.user:
+        summary = get_co2_summary(st.session_state.user["uid"])
+        cols = st.columns(5)
+        cols[0].metric("Today", f"{round(summary['Today'])} kg")
+        cols[1].metric("This Week", f"{round(summary['This Week'])} kg")
+        cols[2].metric("This Month", f"{round(summary['This Month'])} kg")
+        cols[3].metric("This Year", f"{round(summary['This Year'])} kg")
+        cols[4].metric("Overall", f"{round(summary['Overall'])} kg")
+        trivia = generate_trivia(summary["Overall"])
+        st.markdown(trivia)
+
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png"])
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Image", use_container_width=True)
+
+        temp_image_path = "temp_image.jpg"
+        image.save(temp_image_path)
+
+        st.info("⏳ Analyzing image... Please wait.")
+        vision_output = describe_image(temp_image_path)
+        if "Error" in vision_output:
+            st.error(vision_output)
+            return
+
+        # Clean the Vision API output.
+        vision_output_clean = clean_vision_output(vision_output)
+
+        st.markdown("### 📝 Image Description")
+        st.write(vision_output_clean)
+
+        activity_details = process_with_langchain(vision_output)
+        st.markdown("### 📊 Activity Details")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Activity Type:** {activity_details['activity_type']}")
+            if activity_details['activity_type'].lower() == 'recycling':
+                if activity_details['items_description']:
+                    st.write(f"**Items:** {activity_details['items_description']}")
+                if activity_details['pcr_percentage'] > 0:
+                    st.write(f"**PCR Content:** {activity_details['pcr_percentage']}%")
+                if activity_details['reusable_items'] > 0:
+                    st.write(f"**Reusable Items:** {activity_details['reusable_items']}")
+                if activity_details['single_use_saved'] > 0:
+                    st.write(f"**Single-use Items Saved:** {activity_details['single_use_saved']}")
+        with col2:
+            if activity_details['distance_km'] > 0:
+                st.write(f"**Distance:** {activity_details['distance_km']} km")
+            if activity_details['time_duration'] > 0:
+                st.write(f"**Duration:** {activity_details['time_duration']} minutes")
+            if activity_details['source'] and activity_details['destination']:
+                st.write(f"**Route:** {activity_details['source']} to {activity_details['destination']}")
+
+        # --- Key Change: Display CO₂ Savings with one decimal place ---
+        st.metric("CO₂ Savings", f"{activity_details['co2_savings']:.1f} kg")
+
+        if activity_details['additional_notes']:
+            st.info(f"📌 **Additional Notes:** {activity_details['additional_notes']}")
+
+        # Save activity to Firebase.
+        if st.session_state.user:
+            ref = db.reference(f'users/{st.session_state.user["uid"]}/activities')
+            ref.push({
+                "timestamp": datetime.now().isoformat(),
+                "image_description": vision_output,
+                "activity_details": activity_details
+            })
+            st.success("✅ Activity logged successfully!")
+            rerun_app()
+
+        if os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+
+# ------------------------------------------------------------------
+# Main Function with Authentication and Dashboard routing
+def main():
+    st.set_page_config(page_title="CarbonWise", page_icon="🌱", layout="centered")
+    st.markdown(
+        """
+        <style>
+        .main .block-container {
+            max-width: 800px;
+            padding: 1rem;
         }
-        allowed_keys = {
-            "Activity Type",
-            "Items Description",
-            "PCR Percentage",
-            "Reusable Items",
-            "Single-Use Items Saved",
-            "Distance (km)",
-            "Duration (min)",
-            "Source",
-            "Destination",
-            "Additional Notes"
-        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-        for line in response.split('\n'):
-            line = line.strip()
-            if not line or ':' not in line:
-                continue
-            key, value = [x.strip() for x in line.split(':', 1)]
-            if key not in allowed_keys:
-                continue
-            if key == "Activity Type":
-                activity_details["activity_type"] = value
-            elif key == "Items Description":
-                activity_details["items_description"] = value
-            elif key == "PCR Percentage":
-                try:
-                    activity_details["pcr_percentage"] = float(value.split()[0])
-                except:
-                    activity_details["pcr_percentage"] = 0
-            elif key == "Reusable Items":
-                try:
-                    activity_details["reusable_items"] = int(value.split()[0])
-                except:
-                    activity_details["reusable_items"] = 0
-            elif key == "Single-Use Items Saved":
-                try:
-                    activity_details["single_use_saved"] = int(value.split()[0])
-                except:
-                    activity_details["single_use_saved"] = 0
-            elif key == "Distance (km)":
-                try:
-                    activity_details["distance_km"] = float(value.split()[0])
-                except:
-                    activity_details["distance_km"] = 0
-            elif key == "Duration (min)":
-                try:
-                    activity_details["time_duration"] = int(value.split()[0])
-                except:
-                    activity_details["time_duration"] = 0
-            elif key == "Source":
-                activity_details["source"] = value
-            elif key == "Destination":
-                activity_details["destination"] = value
-            elif key == "Additional Notes":
-                activity_details["additional_notes"] = value
+    # Initialize session state.
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+        st.session_state.user = None
+    if 'show_signup' not in st.session_state:
+        st.session_state.show_signup = False
 
-        # Fallback Extraction from Raw Vision Output
-        if activity_details["distance_km"] == 0:
-            m = re.search(r"(?i)distance.*?(\d+\.?\d*)\s*kilometers", vision_output, re.DOTALL)
-            if m:
-                activity_details["distance_km"] = float(m.group(1))
-                print("Fallback: extracted distance =", activity_details["distance_km"])
+    if not initialize_firebase():
+        st.error("Firebase initialization failed.")
+        return
 
-        if activity_details["activity_type"] in ["Not Available", "[Recycling/Exercise/Public Transport]"]:
-            vision_lower = vision_output.lower()
-            if "reusable" in vision_lower or "pcr" in vision_lower or "recycled" in vision_lower:
-                activity_details["activity_type"] = "Recycling"
-            elif "train" in vision_lower or "ticket" in vision_lower or "public transport" in vision_lower:
-                activity_details["activity_type"] = "Public Transport"
-            elif "walking" in vision_lower or "cycling" in vision_lower or "exercise" in vision_lower:
-                activity_details["activity_type"] = "Exercise"
-            else:
-                activity_details["activity_type"] = "None"
+    # If logged in, show the dashboard.
+    if st.session_state.logged_in:
+        show_dashboard()
+        return
 
-        if activity_details["activity_type"] == "Recycling" and activity_details["pcr_percentage"] == 0:
-            m = re.search(r"(\d+)%\s*(pcr)", vision_output.lower())
-            if m:
-                activity_details["pcr_percentage"] = float(m.group(1))
-                print("Fallback: extracted PCR percentage =", activity_details["pcr_percentage"])
+    # Authentication Page
+    with st.container():
+        st.markdown("<h1 style='text-align: center;'>CarbonWise</h1>", unsafe_allow_html=True)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        if st.session_state.show_signup:
+            with col1:
+                st.subheader("Sign Up")
+                with st.form("signup_form", clear_on_submit=True):
+                    signup_email = st.text_input("Email", key="signup_email")
+                    signup_password = st.text_input("Password", type="password", key="signup_password")
+                    submit_signup = st.form_submit_button("Create Account")
+                    if submit_signup:
+                        try:
+                            user = auth.create_user(email=signup_email, password=signup_password)
+                            st.success("✅ Account created successfully!")
+                            st.info("Please login with your new account.")
+                        except Exception as e:
+                            st.error(f"Sign up failed: {str(e)}")
+                if st.button("Back to Login"):
+                    st.session_state.show_signup = False
+            with col2:
+                st.markdown("### Welcome to CarbonWise")
+                st.write("Join us to track your eco-friendly activities and monitor your CO₂ savings.")
+        else:
+            with col1:
+                st.subheader("Login")
+                with st.form("login_form", clear_on_submit=False):
+                    login_email = st.text_input("Email", key="login_email")
+                    login_password = st.text_input("Password", type="password", key="login_password")
+                    submit_login = st.form_submit_button("Login")
+                    if submit_login:
+                        try:
+                            user = auth.get_user_by_email(login_email)
+                            st.session_state.logged_in = True
+                            st.session_state.user = {"email": login_email, "uid": user.uid}
+                            st.success("✅ Logged in successfully!")
+                            rerun_app()
+                        except Exception as e:
+                            st.error(f"Login failed: {str(e)}")
+            with col2:
+                st.markdown("### Welcome Back!")
+                st.write("Log in to view your CarbonWise dashboard and check your CO₂ savings.")
+                if st.button("Don't have an account? Sign Up", key="signup_button"):
+                    st.session_state.show_signup = True
 
-        metrics = {
-            "distance_km": activity_details["distance_km"],
-            "reusable_items": activity_details["reusable_items"],
-            "pcr_percentage": activity_details["pcr_percentage"],
-            "single_use_saved": activity_details["single_use_saved"]
-        }
-        activity_details["co2_savings"] = calculate_co2_savings(activity_details["activity_type"], metrics)
-        return activity_details
-
-    except Exception as e:
-        print(f"Processing Error: {str(e)}")
-        return {
-            "activity_type": "Not Available",
-            "items_description": "",
-            "pcr_percentage": 0,
-            "reusable_items": 0,
-            "single_use_saved": 0,
-            "distance_km": 0,
-            "time_duration": 0,
-            "source": "",
-            "destination": "",
-            "additional_notes": "",
-            "co2_savings": 0
-        }
+if __name__ == '__main__':
+    main()
