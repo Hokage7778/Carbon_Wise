@@ -44,8 +44,8 @@ if "private_key" in firebase_config:
 
 # ------------------------------------------------------------------
 # Initialize Firebase only once using caching.
-# This function will run only once per session.
-@st.experimental_singleton
+# Using st.cache_resource to cache the resource across runs.
+@st.cache_resource
 def init_firebase():
     # Check if any Firebase app has already been initialized.
     if not firebase_admin._apps:
