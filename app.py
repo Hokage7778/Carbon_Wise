@@ -12,7 +12,7 @@ from langchain_community.llms import HuggingFaceHub
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 import toml
-
+import requests
 
 # ------------------------------------------------------------------
 # Load Configuration (Streamlit Secrets or Local TOML)
@@ -436,7 +436,20 @@ def show_dashboard(hf_api_key):
             os.remove(temp_image_path)
 
 # ------------------------------------------------------------------
-# Main Function with Authentication and Dashboard routing
+# Authentication and Main Function
+def get_firebase_auth_token(email, password, api_key):
+    """Authenticates with email/password and returns the ID token."""
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}"
+    data = {
+        "email": email,
+        "password": password,
+        "returnSecureToken": True
+    }
+    response = requests.post(url, json=data)
+    response.raise_for_status()  # Raise HTTPError for bad requests (4xx or 5xx)
+    return response.json()
+
+
 def main():
     st.set_page_config(page_title="CarbonWise", page_icon="🌱", layout="centered")
     st.markdown(
@@ -505,14 +518,30 @@ def main():
                     submit_login = st.form_submit_button("Login")
                     if submit_login:
                         try:
-                            # *** CORRECT AUTHENTICATION ***
-                            user = auth.sign_in_with_email_and_password(login_email, login_password)
+                            # Get the Web API key from the firebase_config
+                            web_api_key = firebase_config.get("apiKey")
+                            if not web_api_key:
+                                raise ValueError("Firebase Web API Key (apiKey) not found in configuration.")
+
+                            # Use the REST API for authentication
+                            auth_response = get_firebase_auth_token(login_email, login_password, web_api_key)
+
                             st.session_state.logged_in = True
-                            st.session_state.user = {"email": user['email'], "uid": user['localId']}
+                            st.session_state.user = {
+                                "email": auth_response['email'],
+                                "uid": auth_response['localId'],
+                                "id_token": auth_response['idToken']  # Store the ID token
+                            }
                             st.success("✅ Logged in successfully!")
                             rerun()  # Go to dashboard
+
+                        except requests.exceptions.HTTPError as e:
+                            error_json = e.response.json()
+                            error_message = error_json.get("error", {}).get("message", "Unknown error")
+                            st.error(f"Login failed: {error_message}")
                         except Exception as e:
-                            st.error(f"Login failed: {e}")  # Display the actual error
+                            st.error(f"Login failed: {e}")
+
 
             with col2:
                 st.markdown("### Welcome Back!")
