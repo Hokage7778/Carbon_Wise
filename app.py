@@ -14,7 +14,7 @@ from langchain.prompts import PromptTemplate
 # ------------------------------------------------------------------
 # Configuration using Streamlit Secrets
 
-# Load the Firebase service account JSON from st.secrets (which is already a dict)
+# Load the Firebase service account JSON from st.secrets (already a dict)
 firebase_config = st.secrets["firebase"]
 
 # Validate that all required keys are present.
@@ -35,35 +35,35 @@ if missing_keys:
     st.error(f"Firebase configuration is missing keys: {missing_keys}")
     st.stop()
 
-# Optionally filter extra keys (this step is optional; adjust if needed).
+# Optionally filter extra keys (adjust if needed).
 firebase_config = {k: v for k, v in firebase_config.items() if k in required_keys}
 
 # Fix the private key formatting: replace escaped newline characters with actual newlines.
 if "private_key" in firebase_config:
     firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
 
-# Initialize Firebase only once.
-try:
-    # Try to get the default app; if it doesn't exist, a ValueError is thrown.
-    firebase_admin.get_app()
-except ValueError:
+# ------------------------------------------------------------------
+# Initialize Firebase only once using caching.
+# This function will run only once per session.
+@st.experimental_singleton
+def init_firebase():
     try:
+        # Try to get the default app. If it exists, just return it.
+        app = firebase_admin.get_app()
+        return app
+    except ValueError:
+        # If no default app exists, initialize one.
         cred = credentials.Certificate(firebase_config)
-        firebase_admin.initialize_app(cred, {
+        app = firebase_admin.initialize_app(cred, {
             'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
         })
-    except Exception as e:
-        st.error(f"Failed to initialize Firebase: {e}")
-        st.stop()
+        return app
+
+# Call the initialization function (this will cache the app)
+init_firebase()
 
 # Load the Hugging Face API key from st.secrets.
 HF_API_KEY = st.secrets["huggingface"]["api_key"]
-
-# ------------------------------------------------------------------
-# Firebase Initialization helper (optional; already initialized above)
-def initialize_firebase():
-    # Since we've already initialized Firebase at the top, simply return True.
-    return True
 
 # ------------------------------------------------------------------
 # Helper function to safely rerun the app
@@ -445,10 +445,6 @@ def main():
         st.session_state.user = None
     if 'show_signup' not in st.session_state:
         st.session_state.show_signup = False
-
-    if not initialize_firebase():
-        st.error("Firebase initialization failed.")
-        return
 
     # If logged in, show the dashboard.
     if st.session_state.logged_in:
