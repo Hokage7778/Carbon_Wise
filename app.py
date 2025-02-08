@@ -35,36 +35,31 @@ if missing_keys:
     st.error(f"Firebase configuration is missing keys: {missing_keys}")
     st.stop()
 
-# Optionally filter extra keys to only allowed keys.
+# Optionally filter extra keys (this step is optional; adjust if needed).
 firebase_config = {k: v for k, v in firebase_config.items() if k in required_keys}
 
 # Fix the private key formatting: replace escaped newline characters with actual newlines.
 if "private_key" in firebase_config:
     firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
 
-# Initialize Firebase with the cleaned configuration.
-try:
-    cred = credentials.Certificate(firebase_config)
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
-    })
-except Exception as e:
-    st.error(f"Failed to initialize Firebase: {e}")
-    st.stop()
+# Initialize Firebase only if it hasn't been initialized already.
+if not firebase_admin._apps:
+    try:
+        cred = credentials.Certificate(firebase_config)
+        firebase_admin.initialize_app(cred, {
+            'databaseURL': 'https://sample-project-050225-default-rtdb.firebaseio.com'
+        })
+    except Exception as e:
+        st.error(f"Failed to initialize Firebase: {e}")
+        st.stop()
 
 # Load the Hugging Face API key from st.secrets.
 HF_API_KEY = st.secrets["huggingface"]["api_key"]
 
 # ------------------------------------------------------------------
-# Firebase Initialization
+# Firebase Initialization helper (optional; already initialized above)
 def initialize_firebase():
-    if not firebase_admin._apps:
-        try:
-            # Firebase is already initialized above using secrets.
-            return True
-        except Exception as e:
-            st.error(f"Failed to initialize Firebase: {str(e)}")
-            return False
+    # Since we've already initialized Firebase at the top, simply return True.
     return True
 
 # ------------------------------------------------------------------
