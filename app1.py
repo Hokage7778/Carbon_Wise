@@ -293,6 +293,11 @@ Image Description:
                 activity_details["distance_km"] = float(m.group(1))
                 print("Fallback: extracted distance =", activity_details["distance_km"])
 
+        # If the extracted activity type contains 'reusable', normalize it to 'Recycling'
+        if "reusable" in activity_details["activity_type"].lower():
+            activity_details["activity_type"] = "Recycling"
+
+        # Additional fallback if activity type is not clearly set.
         if activity_details["activity_type"] in ["Not Available", "[Recycling/Exercise/Public Transport]"]:
             vision_lower = vision_output.lower()
             if "reusable" in vision_lower or "pcr" in vision_lower or "recycled" in vision_lower:
