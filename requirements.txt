@@ -4,3 +4,4 @@ python-dotenv
 Pillow
 huggingface_hub
 langchain_community
+requests
